@@ -18,13 +18,16 @@ import (
 	"time"
 )
 type Config struct {
-	ApiURL       string
-	AppID        string
-	AppKey       string
-	CookieName   string
-	CookieDomain string
+	ApiURL        string
+	AppID         string
+	AppKey        string
+	CookieName    string
+	CookieDomain  string
 	SessionSecret string
-	Listen       string
+	Listen        string
+	DefaultType   string
+	DefaultTypes  []string
+	LoginOptions  []LoginOption
 }
 
 type stateRecord struct {
@@ -205,18 +208,39 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 
 func startHandler(w http.ResponseWriter, r *http.Request) {
 	loginType := r.URL.Query().Get("type")
-	if loginType == "" { loginType = "qq" }
 	rd := sanitizeRD(r, r.URL.Query().Get("rd"))
-	state := randState()
-	states.Set(state, rd, loginType)
 	callback := buildCallbackURL(r)
-	url, err := callLogin(loginType, state, callback)
-	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		fmt.Fprint(w, err.Error())
+
+	var candidates []string
+	if loginType != "" {
+		candidates = []string{loginType}
+	} else if len(cfg.DefaultTypes) > 0 {
+		candidates = cfg.DefaultTypes
+	} else if cfg.DefaultType != "" {
+		candidates = []string{cfg.DefaultType}
+	} else {
+		candidates = []string{"qq"}
+	}
+
+	var lastErr error
+	for _, t := range candidates {
+		state := randState()
+		url, err := callLogin(t, state, callback)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		states.Set(state, rd, t)
+		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, url, http.StatusFound)
+
+	w.WriteHeader(http.StatusBadGateway)
+	if lastErr != nil {
+		fmt.Fprint(w, lastErr.Error())
+	} else {
+		fmt.Fprint(w, "no available login type")
+	}
 }
 func callbackHandler(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
@@ -283,6 +307,17 @@ func envOrDefault(k, def string) string {
 	return v
 }
 
+func splitCSV(s string) []string {
+	if s == "" { return nil }
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" { out = append(out, t) }
+	}
+	return out
+}
+
 func normalizeAPI(urlStr string) string {
 	if !strings.HasSuffix(urlStr, "/") {
 		return urlStr + "/"
@@ -299,14 +334,79 @@ func main() {
 		CookieDomain:  os.Getenv("JUNE_COOKIE_DOMAIN"),
 		SessionSecret: os.Getenv("JUNE_SESSION_SECRET"),
 		Listen:        envOrDefault("LISTEN_ADDR", ":4181"),
+		DefaultType:   envOrDefault("JUNE_DEFAULT_TYPE", "qq"),
+		DefaultTypes:  splitCSV(os.Getenv("JUNE_DEFAULT_TYPES")),
 	}
+	// 解析用户可选登录方式（key:Label, 逗号分隔）
+	cfg.LoginOptions = parseLoginOptions(os.Getenv("JUNE_LOGIN_OPTIONS"))
+
 	if cfg.AppID == "" || cfg.AppKey == "" || cfg.SessionSecret == "" {
 		log.Fatal("env JUNE_APP_ID, JUNE_APP_KEY, JUNE_SESSION_SECRET 必填")
 	}
+
 	http.HandleFunc("/verify", verifyHandler)
 	http.HandleFunc("/start", startHandler)
 	http.HandleFunc("/callback", callbackHandler)
 	http.HandleFunc("/logout", logoutHandler)
+	http.HandleFunc("/login", loginHandler)
 	log.Printf("Forward-Auth 启动: %s", cfg.Listen)
 	log.Fatal(http.ListenAndServe(cfg.Listen, nil))
+}
+type LoginOption struct {
+	Key   string
+	Label string
+}
+
+func parseLoginOptions(s string) []LoginOption {
+	opts := []LoginOption{}
+	if s == "" {
+		return opts
+	}
+	parts := strings.Split(s, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.Contains(p, ":") {
+			kv := strings.SplitN(p, ":", 2)
+			k := strings.TrimSpace(kv[0])
+			v := strings.TrimSpace(kv[1])
+			if k != "" {
+				if v == "" { v = k }
+				opts = append(opts, LoginOption{Key: k, Label: v})
+			}
+		} else {
+			opts = append(opts, LoginOption{Key: p, Label: p})
+		}
+	}
+	return opts
+}
+
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	rd := sanitizeRD(r, r.URL.Query().Get("rd"))
+	opts := cfg.LoginOptions
+	if len(opts) == 0 {
+		// 回退：使用多候选或单默认值构造选项
+		if len(cfg.DefaultTypes) > 0 {
+			for _, t := range cfg.DefaultTypes {
+				opts = append(opts, LoginOption{Key: t, Label: t})
+			}
+		} else if cfg.DefaultType != "" {
+			opts = []LoginOption{{Key: cfg.DefaultType, Label: cfg.DefaultType}}
+		}
+	}
+	if len(opts) == 0 {
+		opts = []LoginOption{{Key: "qq", Label: "qq"}}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	io.WriteString(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>选择登录方式</title><style>body{font-family:sans-serif;margin:40px}a.btn{display:block;margin:10px 0;padding:12px 16px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:6px;width:260px;text-align:center}a.btn:hover{opacity:.9}</style></head><body>")
+	io.WriteString(w, "<h2>请选择登录方式</h2>")
+	qrd := url.QueryEscape(rd)
+	for _, o := range opts {
+		link := "/_june_auth_start?type=" + url.QueryEscape(o.Key) + "&rd=" + qrd
+		fmt.Fprintf(w, "<a class=\"btn\" href=\"%s\">%s</a>", link, o.Label)
+	}
+	io.WriteString(w, "</body></html>")
 }

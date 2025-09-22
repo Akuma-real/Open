@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  june-auth:
+    image: ghcr.io/akuma-real/go-forward-auth:latest
+    container_name: june-auth
+    restart: unless-stopped
+    ports:
+      - "4181:4181"
+    environment:
+      JUNE_APP_ID: "在此填入你的应用ID"
+      JUNE_APP_KEY: "在此填入你的应用密钥"
+      JUNE_SESSION_SECRET: "强随机密钥"
+      JUNE_API_URL: "https://u.june.ink/"
+      # 需要跨子域 SSO 时设置为 .example.com；否则可留空或删除此行
+      # JUNE_COOKIE_DOMAIN: ""
+      LISTEN_ADDR: ":4181"
