@@ -119,8 +119,16 @@ func forwardedProto(r *http.Request) string {
 	return p
 }
 
+func forwardedHost(r *http.Request) string {
+	h := r.Header.Get("X-Forwarded-Host")
+	if h == "" {
+		return r.Host
+	}
+	return h
+}
+
 func buildCallbackURL(r *http.Request) string {
-	return fmt.Sprintf("%s://%s/_june_auth_callback", forwardedProto(r), r.Host)
+	return fmt.Sprintf("%s://%s/_june_auth_callback", forwardedProto(r), forwardedHost(r))
 }
 
 func sanitizeRD(r *http.Request, rd string) string {
