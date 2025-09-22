@@ -11,6 +11,10 @@ services:
       JUNE_APP_KEY: "在此填入你的应用密钥"
       JUNE_SESSION_SECRET: "强随机密钥"
       JUNE_API_URL: "https://u.june.ink/"
-      # 需要跨子域 SSO 时设置为 .example.com；否则可留空或删除此行
+      # 多候选回退（未指定 ?type= 时按顺序尝试）
+      JUNE_DEFAULT_TYPES: "google,microsoft,github,gitee"
+      # 选择页按钮与显示名称（供边车 /login 页使用）
+      JUNE_LOGIN_OPTIONS: "google:Google,microsoft:Microsoft,github:GitHub,gitee:Gitee"
+      # 同主域多子域 SSO 时设置为 .june.ink；不同顶级域留空
       # JUNE_COOKIE_DOMAIN: ""
       LISTEN_ADDR: ":4181"
